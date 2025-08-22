@@ -1,69 +1,41 @@
 # pages/00_Data_Validation.py
-# ===========================
-# Data Validation page (read-only; uses centralized upload_manager)
-# ===========================
-
 from pathlib import Path
-import os
-import re
 import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
+import os
+import re
 
-# ----- Page meta (must be the first Streamlit call) -----
-ROOT = Path(__file__).resolve().parent.parent    # project root
+ROOT = Path(__file__).resolve().parent.parent
 ICON_PATH = ROOT / "assets" / "brcb-logo.png"
-
 try:
     icon = Image.open(ICON_PATH) if ICON_PATH.exists() else "🧪"
 except Exception:
     icon = "🧪"
 
-st.set_page_config(
-    page_title="Data Validation · Breaking CCUB",
-    page_icon=icon,
-    layout="wide",
-)
+st.set_page_config(page_title="Data Validation · Breaking CCUB", page_icon=icon, layout="wide")
 
-# ----- Global header on every page -----
-from common_ui import render_global_header
-render_global_header(
-    title="Breaking CCUB",
-    subtitle="WorldCCUB Analytics",
-    logo_path="assets/brcb-logo.png",
-    logo_width=120,
-    retina_scale=2,
-)
+from common_ui import render_global_header, render_session_files_sidebar_simple
+from ui_style import PLOTLY_HEIGHT
 
-# ----- Use the same upload manager as app.py (so adding/removing files works here too!)
-from upload_manager import (
-    ensure_upload_state, render_sidebar_manager, get_combined_df, has_files
-)
-ensure_upload_state()
-render_sidebar_manager(show_meta=True)  # ← sidebar: list / add more / delete / clear
+# 글로벌 헤더 (중복 호출 제거)
+render_global_header("Breaking CCUB", "WorldCCUB Analytics", "assets/brcb-logo.png", 120, 2)
 
-# ===========================
-# Session inputs (read-only)
-# ===========================
-if not has_files():
-    st.warning("No data found. Go to **Overview** and upload CSVs first.")
-    st.stop()
+# 사이드바: Session files 전용
+render_session_files_sidebar_simple()
 
-df = get_combined_df()
-if df is None or len(df) == 0:
-    st.warning("No rows after combining files.")
+# df 먼저 준비
+df = st.session_state.get("df", pd.DataFrame())
+if df.empty:
+    st.info("No data yet. Upload CSVs on the Home page.")
     st.stop()
 
 # ===========================
 # Scope selection (Combined / Per‑file / Per‑country)
 # ===========================
 st.subheader("Validation Scope")
-scope = st.radio(
-    "Choose validation scope",
-    ["Combined", "Per‑file", "Per‑country"],
-    horizontal=True,
-)
+scope = st.radio("Choose validation scope", ["Combined", "Per‑file", "Per‑country"], horizontal=True)
 
 scoped_df = df
 scope_label = "Combined"
