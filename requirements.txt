@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+sentence-transformers
+umap-learn
+scikit-learn
+Pillow
+requests
+plotly
+huggingface_hub
