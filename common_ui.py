@@ -3,6 +3,7 @@ from pathlib import Path
 import base64
 import streamlit as st
 from PIL import Image
+import streamlit as st
 
 def _resolve_logo(path_str: str) -> Path:
     p = Path(path_str)
@@ -94,3 +95,19 @@ def render_global_header(
             unsafe_allow_html=True
         )
     st.divider()
+
+def render_session_files_sidebar_simple(
+    title: str = "Session files",
+    manage_caption: str = "Manage uploads on the Home page (Data Manager).",
+    empty_caption: str = "No files loaded. Upload on the Home page.",
+):
+    with st.sidebar:
+        st.markdown(f"### {title}")
+        files_list = st.session_state.get("files_list", [])
+        if files_list:
+            for it in files_list:
+                rows = it.get("meta", {}).get("rows", 0)
+                st.caption(f"{it['name']} — {rows:,} rows")
+            st.caption(manage_caption)
+        else:
+            st.caption(empty_caption)

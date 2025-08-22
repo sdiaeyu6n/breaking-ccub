@@ -15,17 +15,29 @@ except Exception:
 
 st.set_page_config(page_title="Cultural Diversity · Breaking CCUB", page_icon=icon, layout="wide")
 
-from common_ui import render_global_header
+from common_ui import render_global_header, render_session_files_sidebar_simple
 from ui_style import PLOTLY_HEIGHT
+
+# 글로벌 헤더
 render_global_header("Breaking CCUB", "WorldCCUB Analytics", "assets/brcb-logo.png", 120, 2)
 
+# 사이드바: Session files 전용
+render_session_files_sidebar_simple()
+
+# --- 여기서 df 먼저 준비 ---
 df = st.session_state.get("df", pd.DataFrame())
 if df.empty:
     st.info("No data yet. Upload CSVs on the Home page.")
     st.stop()
 
-st.subheader("Cultural Diversity Dashboard")
+# 안전한 기본 컬럼 보정 (이제 df가 정의된 후에 실행)
+for col in ["country", "category"]:
+    if col not in df.columns:
+        df[col] = ""
+df["country"] = df["country"].astype(str)
+df["category"] = df["category"].astype(str)
 
+st.subheader("Cultural Diversity Dashboard")
 # 안전한 기본 컬럼 보정
 for col in ["country", "category"]:
     if col not in df.columns:
