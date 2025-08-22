@@ -32,6 +32,11 @@ render_global_header(
 # Plot style constants
 from ui_style import PLOTLY_HEIGHT
 
+# ---- uploader nonce for resetting the file_uploader widget ----
+if "uploader_nonce" not in st.session_state:
+    st.session_state["uploader_nonce"] = 0
+
+
 # ---------------- Helpers ----------------
 def _norm_text(s):
     if pd.isna(s): return ""
@@ -120,98 +125,152 @@ def _rebuild_combined_df():
     st.session_state["df"] = df
     return df
 
-# ---------------- Sidebar: uploader + live file list + per-file delete ----------------
-with st.sidebar:
-    st.markdown("### Upload CSVs")
-
-    # session scaffolding
+# ---------------- Session helpers ----------------
+def _ensure_session_scaffold():
     if "files_list" not in st.session_state:
-        st.session_state["files_list"] = []
+        st.session_state["files_list"] = []   # [{"name","hash","df","meta"}...]
     if "file_hashes" not in st.session_state:
         st.session_state["file_hashes"] = set()
 
-    files = st.file_uploader(
-        "Upload one or more CSVs (you can drop files multiple times)",
-        type="csv",
-        accept_multiple_files=True,
-        key="uploader_main",
-    )
-
-    # Ingest newly uploaded files (NO rerun)
-    if files:
-        added = 0
-        for f in files:
-            try:
-                h = file_md5(f)
-                if h in st.session_state["file_hashes"]:
-                    continue
-                f.seek(0)
-                tmp = pd.read_csv(f)
-                tmp["source_file"] = f.name
-
-                for col in ["original_description", "enhanced_caption", "country", "category"]:
-                    if col not in tmp.columns:
-                        tmp[col] = ""
-                tmp["original_description"] = tmp["original_description"].astype(str)
-                tmp["enhanced_caption"]    = tmp["enhanced_caption"].astype(str)
-                tmp["country"]             = tmp["country"].astype(str)
-                tmp["category"]            = tmp["category"].astype(str)
-
-                tmp["orig_len"] = tmp["original_description"].str.split().str.len()
-                tmp["enh_len"]  = tmp["enhanced_caption"].str.split().str.len()
-
-                meta = {
-                    "file": f.name,
-                    "rows": int(len(tmp)),
-                    "cols": int(tmp.shape[1]),
-                    "countries": int(tmp["country"].nunique()),
-                    "categories": int(tmp["category"].nunique()),
-                    "avg_enh_len": float(tmp["enh_len"].mean()) if len(tmp) else None,
-                }
-
-                st.session_state["files_list"].append({
-                    "name": f.name, "hash": h, "df": tmp, "meta": meta
-                })
-                st.session_state["file_hashes"].add(h)
-                added += 1
-            except Exception as e:
-                st.sidebar.error(f"Failed to read {getattr(f, 'name', 'file')}: {e}")
-
-        if added:
-            _rebuild_combined_df()
-            st.success(f"Added {added} file(s).")  # immediate feedback
-
-    # Clear all (NO rerun)
-    if st.button("Clear uploaded data", key="btn_clear_all"):
-        st.session_state.pop("files_list", None)
-        st.session_state.pop("file_hashes", None)
-        _rebuild_combined_df()
-        st.info("Cleared all files.")
-
-    # Live file list with per-file delete (NO rerun)
+def _rebuild_combined_df():
     files_list = st.session_state.get("files_list", [])
     if files_list:
-        st.markdown("#### Loaded files")
-        for idx, item in enumerate(list(files_list)):  # iterate over copy for safe pop
-            name = item["name"]
-            rows = item["meta"].get("rows", 0)
-            c1, c2 = st.columns([0.75, 0.25])
-            with c1:
-                st.caption(f"{name} — {rows:,} rows")
-            with c2:
-                if st.button("Delete", key=f"del_{idx}_{name}"):
-                    st.session_state["files_list"].pop(idx)
-                    st.session_state.get("file_hashes", set()).discard(item.get("hash"))
-                    _rebuild_combined_df()
-                    st.info(f"Removed {name}.")
+        df = pd.concat([item["df"] for item in files_list], ignore_index=True)
     else:
-        st.caption("No files yet.")
-    st.caption("Files with **identical content** are skipped automatically.")
+        df = pd.DataFrame()
+    st.session_state["df"] = df
+    return df
 
-# Combined dataframe used by analysis tabs (always via helper)
+def _ingest_files(uploaded_files):
+    """Append newly uploaded CSVs; skip duplicate content by MD5."""
+    if not uploaded_files:
+        return 0
+    added = 0
+    for f in uploaded_files:
+        try:
+            h = file_md5(f)
+            if h in st.session_state["file_hashes"]:
+                continue
+
+            f.seek(0)
+            tmp = pd.read_csv(f)
+            tmp["source_file"] = f.name
+
+            # Ensure required columns & dtypes
+            for col in ["original_description", "enhanced_caption", "country", "category"]:
+                if col not in tmp.columns:
+                    tmp[col] = ""
+            tmp["original_description"] = tmp["original_description"].astype(str)
+            tmp["enhanced_caption"]    = tmp["enhanced_caption"].astype(str)
+            tmp["country"]             = tmp["country"].astype(str)
+            tmp["category"]            = tmp["category"].astype(str)
+
+            # Derived
+            tmp["orig_len"] = tmp["original_description"].str.split().str.len()
+            tmp["enh_len"]  = tmp["enhanced_caption"].str.split().str.len()
+
+            meta = {
+                "file": f.name,
+                "rows": int(len(tmp)),
+                "cols": int(tmp.shape[1]),
+                "countries": int(tmp["country"].nunique()),
+                "categories": int(tmp["category"].nunique()),
+                "avg_enh_len": float(tmp["enh_len"].mean()) if len(tmp) else None,
+            }
+
+            st.session_state["files_list"].append(
+                {"name": f.name, "hash": h, "df": tmp, "meta": meta}
+            )
+            st.session_state["file_hashes"].add(h)
+            added += 1
+        except Exception as e:
+            st.error(f"Failed to read {getattr(f, 'name', 'file')}: {e}")
+    return added
+
+def _delete_file_by_index(idx):
+    files_list = st.session_state.get("files_list", [])
+    if 0 <= idx < len(files_list):
+        item = files_list.pop(idx)
+        st.session_state["file_hashes"].discard(item.get("hash"))
+        return item["name"]
+    return None
+
+# ---------------- Data Manager (MAIN PAGE; not sidebar) ----------------
+_ensure_session_scaffold()
+with st.container():
+    st.subheader("Data Manager")
+
+    left, right = st.columns([1.3, 1])
+    with left:
+        st.markdown("**Upload CSVs**")
+        nonce = st.session_state["uploader_nonce"]
+        new_files = st.file_uploader(
+            "Upload one or more CSVs (you can drop files multiple times)",
+            type="csv",
+            accept_multiple_files=True,
+            key=f"uploader_main_body_{nonce}",  # ← nonce를 섞어서 매번 '새 위젯'으로
+        )
+
+        # 업로드 즉시 반영 (드롭 → ingest → 위젯값 초기화 → 재구성 → 리렌더)
+        if new_files:
+            added = _ingest_files(new_files)
+            if added:
+                _rebuild_combined_df()
+                st.success(f"Added {added} file(s).")
+                # 업로더 초기화: nonce 증가 → 다음 렌더에서 '빈' 업로더로 교체
+                st.session_state["uploader_nonce"] += 1
+                st.rerun()
+
+        # 전체 삭제
+        if st.button("Clear all files", type="secondary", help="Remove every loaded file"):
+            st.session_state.pop("files_list", None)
+            st.session_state.pop("file_hashes", None)
+            _ensure_session_scaffold()
+            _rebuild_combined_df()
+            st.info("All files cleared.")
+            st.rerun()
+
+    with right:
+        st.markdown("**Loaded files**")
+        files_list = st.session_state.get("files_list", [])
+        if not files_list:
+            st.caption("No files loaded yet.")
+        else:
+            # 요약 테이블
+            summary = pd.DataFrame(
+                [
+                    {
+                        "file": it["meta"]["file"],
+                        "rows": it["meta"]["rows"],
+                        "countries": it["meta"]["countries"],
+                        "categories": it["meta"]["categories"],
+                        "avg_enh_len": (
+                            f'{it["meta"]["avg_enh_len"]:.1f}'
+                            if it["meta"]["avg_enh_len"] is not None else "-"
+                        ),
+                    }
+                    for it in files_list
+                ]
+            )
+            st.dataframe(summary, use_container_width=True, hide_index=True)
+
+            # 개별 삭제 (행마다 버튼)
+            st.markdown("**Delete a file**")
+            for idx, it in enumerate(files_list):
+                col1, col2 = st.columns([0.8, 0.2])
+                with col1:
+                    st.caption(f"• {it['name']} — {it['meta'].get('rows', 0):,} rows")
+                with col2:
+                    if st.button("🗑 Delete", key=f"del_{idx}_{it['hash']}", help=f"Remove {it['name']}"):
+                        removed = _delete_file_by_index(idx)
+                        _rebuild_combined_df()
+                        st.info(f"Removed {removed}.")
+                        st.rerun()
+
+# ---------------- Build combined df for analysis ----------------
 df = _rebuild_combined_df()
 if df is None or df.empty:
-    st.info("Please upload one or more CSV files. You can drop files multiple times; all will be accumulated.")
+    st.info("Please upload one or more CSV files to begin.")
     st.stop()
 
 # ---------------- Tabs ----------------
